@@ -18,6 +18,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
   Modal,
   SafeAreaView,
   StatusBar,
@@ -312,6 +313,17 @@ export default function App() {
           <Text style={styles.detailCondition}>{result.condition_assessment}</Text>
         </View>
 
+        {/* View listing button — only shown when a URL was grounded */}
+        {result.product_url && (
+          <TouchableOpacity
+            style={styles.listingBtn}
+            onPress={() => Linking.openURL(result.product_url)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.listingBtnText}>VIEW ORIGINAL LISTING</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Next-item button */}
         <TouchableOpacity style={styles.scanNextBtn} onPress={resetApp} activeOpacity={0.8}>
           <Text style={styles.scanNextBtnText}>SCAN NEXT ITEM</Text>
@@ -519,8 +531,24 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 28,
   },
+  listingBtn: {
+    marginTop: 24,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.5)",
+    borderRadius: 16,
+    paddingVertical: 20,
+    paddingHorizontal: 40,
+  },
+  listingBtnText: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: C.white,
+    letterSpacing: 2,
+    textAlign: "center",
+  },
   scanNextBtn: {
-    marginTop: 32,
+    marginTop: 16,
     borderWidth: 3,
     borderColor: C.white,
     borderRadius: 16,

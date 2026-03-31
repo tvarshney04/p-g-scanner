@@ -21,6 +21,7 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 # Load .env automatically in local development.
 # In production (Cloud Run) env vars are injected directly; dotenv is a no-op.
@@ -70,10 +71,11 @@ Follow these steps exactly:
 1. Read IMAGE 2 (tag) to identify the exact brand and model name.
 2. Inspect IMAGE 1 (garment) to assess condition — note any stains,
    pilling, fading, tears, or missing hardware.
-3. Use your knowledge of 2025-2026 retail and resale market data to estimate:
-   - original_msrp (USD float): the price this item sold for brand-new.
-   - estimated_as_is_value (USD float): its current eBay/Poshmark value
-     given its actual condition.
+3. Search Google to find current 2026 pricing for this exact item:
+   - original_msrp (USD float): the original retail price — find it on the brand
+     site or a major retailer like Nordstrom or Macy's.
+   - estimated_as_is_value (USD float): what it is actively selling for right now
+     on eBay, Poshmark, or Depop given its actual condition. Use live sold listings.
 4. Set pg_restoration_eligible = true ONLY when BOTH are true:
    - The brand is a recognised premium, outdoor, or luxury label
      (e.g. Patagonia, Arc'teryx, Canada Goose, Lululemon, Ralph Lauren,
@@ -104,6 +106,8 @@ class ScanResult(BaseModel):
     estimated_as_is_value: float = Field(..., description="Current resale value as-is (USD)")
     pg_restoration_eligible: bool = Field(..., description="True = divert to P&G restoration")
     size_of_prize: float = Field(..., description="MSRP minus as-is value (USD)")
+    product_url: Optional[str] = Field(None, description="Best matching product listing URL")
+    source_urls: list[str] = Field(default_factory=list, description="All grounding source URLs")
 
 
 class ScanResponse(BaseModel):
@@ -175,6 +179,64 @@ def extract_json(text: str) -> dict:
             f"Could not parse JSON from Gemini response. "
             f"First 400 chars: {text[:400]}"
         )
+
+
+# ── Helper: extract best product URL from grounding metadata ─────────────────
+# Sources ranked by usefulness: brand site > premium retail > standard retail > resale
+_URL_PRIORITY = [
+    "levi", "patagonia", "arcteryx", "thenorthface", "northface",
+    "lululemon", "columbia", "canadagoose", "moncler", "ralphlauren",
+    "burberry", "gucci", "prada", "barbour", "filson",
+    "nordstrom", "bloomingdales", "saks", "neimanmarcus",
+    "macys", "kohls", "zappos",
+    "poshmark", "ebay", "depop", "thredup",
+]
+
+
+def extract_grounding_urls(response) -> tuple[Optional[str], list[str]]:
+    """
+    Pull URLs out of Gemini's grounding_metadata.
+    Returns (best_url, all_urls).
+
+    Two sources are checked:
+    1. grounding_chunks — populated when the model cites specific sources in text.
+       This is sparse when the model outputs pure JSON (no inline citations).
+    2. search_entry_point.rendered_content — always populated whenever a Google
+       Search fires, regardless of whether the model cites inline. Contains the
+       chip <a href="..."> links as Google grounding redirect URIs.
+    """
+    try:
+        meta = response.candidates[0].grounding_metadata
+    except (AttributeError, IndexError):
+        return None, []
+
+    all_urls: list[str] = []
+
+    # Source 1: grounding_chunks (title-keyed, best for priority matching)
+    chunks = meta.grounding_chunks or []
+    chunk_urls = [c.web.uri for c in chunks if c.web and c.web.uri]
+    all_urls.extend(chunk_urls)
+
+    # Source 2: chip hrefs from search_entry_point (reliable fallback)
+    entry_html = getattr(meta.search_entry_point, "rendered_content", "") or ""
+    chip_urls = re.findall(r'href="(https://vertexaisearch\.cloud\.google\.com[^"]+)"', entry_html)
+    for url in chip_urls:
+        if url not in all_urls:
+            all_urls.append(url)
+
+    if not all_urls:
+        return None, []
+
+    # Walk priority list — match against chunk titles first (more informative)
+    for priority in _URL_PRIORITY:
+        for chunk in chunks:
+            if chunk.web and chunk.web.uri:
+                title = (chunk.web.title or "").lower().replace(" ", "").replace(".", "")
+                if priority in title:
+                    return chunk.web.uri, all_urls
+
+    # No priority match — return first available URL
+    return all_urls[0], all_urls
 
 
 # ── Helper: BigQuery async logging ───────────────────────────────────────────
@@ -255,7 +317,14 @@ async def scan_item(
                 config=types.GenerateContentConfig(
                     # google_search grounding lets the model query live 2026
                     # shopping data for accurate MSRP and resale pricing.
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                    tools=[types.Tool(google_search=types.GoogleSearch(
+                        # Restrict to the last 6 months so the model is forced to
+                        # search for live pricing rather than fall back on training data.
+                        time_range_filter=types.Interval(
+                            start_time=(datetime.now(timezone.utc) - timedelta(days=180)).replace(microsecond=0),
+                            end_time=datetime.now(timezone.utc).replace(microsecond=0),
+                        )
+                    ))],
                     temperature=0.1,  # Minimal randomness — we want factual answers
                 ),
             ),
@@ -274,10 +343,14 @@ async def scan_item(
         log.error(f"Gemini API error: {exc}", exc_info=True)
         raise HTTPException(status_code=502, detail=f"AI inference error: {exc}")
 
-    # ── 4. Parse and validate the response ───────────────────────────────────
+    # ── 4. Extract grounding URLs ─────────────────────────────────────────────
+    product_url, source_urls = extract_grounding_urls(response)
+    log.info(f"Grounding found {len(source_urls)} source(s). Best URL: {product_url}")
+
+    # ── 5. Parse and validate the response ───────────────────────────────────
     try:
         raw_dict = extract_json(response.text)
-        scan_result = ScanResult(**raw_dict)
+        scan_result = ScanResult(**raw_dict, product_url=product_url, source_urls=source_urls)
     except (ValueError, TypeError, KeyError) as exc:
         log.error(
             f"JSON parse/validation failed: {exc}\n"
@@ -288,7 +361,7 @@ async def scan_item(
             detail=f"Failed to parse structured data from AI response: {exc}",
         )
 
-    # ── 5. Async BigQuery analytics log (fire and forget) ────────────────────
+    # ── 6. Async BigQuery analytics log (fire and forget) ────────────────────
     timestamp = datetime.now(timezone.utc).isoformat()
     asyncio.create_task(
         log_to_bigquery(
@@ -296,7 +369,7 @@ async def scan_item(
         )
     )
 
-    # ── 6. Return structured response ────────────────────────────────────────
+    # ── 7. Return structured response ────────────────────────────────────────
     return ScanResponse(
         status="success",
         facility=facility,
