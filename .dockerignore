@@ -1,0 +1,11 @@
+venv/
+.env
+.env.*
+__pycache__/
+*.pyc
+.DS_Store
+mobile/
+node_modules/
+jacket.jpg
+tag.jpg
+main.py

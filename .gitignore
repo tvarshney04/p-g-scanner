@@ -1,0 +1,26 @@
+# ── Environment & secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+service-account*.json
+
+# ── Python ────────────────────────────────────────────────────────────────────
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+
+# ── Node / React Native ───────────────────────────────────────────────────────
+node_modules/
+.expo/
+dist/
+*.jsbundle
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
