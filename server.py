@@ -64,31 +64,49 @@ BIGQUERY_TABLE: str = os.environ.get("BIGQUERY_TABLE", "scan_results")
 # is active (response_schema cannot be combined with grounding tools).
 SCAN_PROMPT = """
 You are an AI assistant embedded in a Goodwill sorting-line scanner.
-You are given two images: IMAGE 1 is the GARMENT, IMAGE 2 is the INNER TAG.
+You are given THREE images:
+  IMAGE 1 — the GARMENT (full item, for condition assessment)
+  IMAGE 2 — the BRAND TAG (inner neck/waist label, for brand and model)
+  IMAGE 3 — the CARE TAG (usually sewn into side seam or hem, for style number/SKU)
 
 Follow these steps exactly:
 
-1. Read IMAGE 2 (tag) to identify the exact brand and model name.
-2. Inspect IMAGE 1 (garment) to assess condition — note any stains,
-   pilling, fading, tears, or missing hardware.
-3. Search Google to find current 2026 pricing for this exact item:
-   - original_msrp (USD float): the original retail price — find it on the brand
-     site or a major retailer like Nordstrom or Macy's.
+1. Read IMAGE 2 to identify the exact brand and model name.
+
+2. Read IMAGE 3 to find the style number or SKU (e.g. "72334-0000", "Style: LM8RS506",
+   "Item #", "Art.", or any alphanumeric code on the care label).
+   If no style number is visible, set style_number to null.
+
+3. Inspect IMAGE 1 to assess condition — note any stains, pilling, fading, tears,
+   or missing hardware.
+
+4. Search Google to find the official product page where this item can be purchased:
+   - If you found a style number, search for "[brand] [style_number]" — this will
+     return the exact product page on the brand's website or a major retailer.
+   - Otherwise search for "[brand] [model_name] buy [current year]".
+   - Prefer results from the brand's own site, then Nordstrom, REI, Macy's, etc.
+   - original_msrp (USD float): the listed retail price from that product page.
+
+5. Search Google for current resale value:
+   - Search eBay and Poshmark for recently SOLD listings of this exact item.
    - estimated_as_is_value (USD float): what it is actively selling for right now
-     on eBay, Poshmark, or Depop given its actual condition. Use live sold listings.
-4. Set pg_restoration_eligible = true ONLY when BOTH are true:
+     given its actual condition.
+
+6. Set pg_restoration_eligible = true ONLY when BOTH are true:
    - The brand is a recognised premium, outdoor, or luxury label
      (e.g. Patagonia, Arc'teryx, Canada Goose, Lululemon, Ralph Lauren,
      The North Face, Barbour, Filson, Moncler, Gucci, Prada, Burberry).
    - The defect is a MINOR, CLEANABLE stain — not a tear, severe fading,
      broken zipper, or structural damage.
-5. Compute size_of_prize = original_msrp − estimated_as_is_value.
+
+7. Compute size_of_prize = original_msrp − estimated_as_is_value.
 
 Respond with ONLY a valid JSON object. No prose, no markdown, no code fences.
 Use exactly this schema:
 {
   "brand": "string",
   "model_name": "string",
+  "style_number": "string or null",
   "condition_assessment": "string",
   "original_msrp": 0.00,
   "estimated_as_is_value": 0.00,
@@ -101,6 +119,7 @@ Use exactly this schema:
 class ScanResult(BaseModel):
     brand: str = Field(..., description="Brand name from tag image")
     model_name: str = Field(..., description="Model or product line")
+    style_number: Optional[str] = Field(None, description="Style/SKU from care tag, if found")
     condition_assessment: str = Field(..., description="Plain-language condition summary")
     original_msrp: float = Field(..., description="Original retail price (USD)")
     estimated_as_is_value: float = Field(..., description="Current resale value as-is (USD)")
@@ -272,11 +291,12 @@ async def log_to_bigquery(payload: dict) -> None:
 @app.post("/api/v1/scan", response_model=ScanResponse)
 async def scan_item(
     jacket_image: UploadFile = File(..., description="Full garment photo"),
-    tag_image: UploadFile = File(..., description="Macro shot of inner tag"),
+    tag_image: UploadFile = File(..., description="Macro shot of inner brand tag"),
+    care_image: UploadFile = File(..., description="Macro shot of care/washing tag (style number)"),
     facility: Optional[str] = Query(None, description="Facility name for analytics"),
 ):
     """
-    Accept two JPEG/PNG uploads, run the P&G Gemini pipeline with live
+    Accept three JPEG/PNG uploads, run the P&G Gemini pipeline with live
     search grounding, and return a validated ScanResult JSON object.
     Also fires a non-blocking BigQuery analytics write.
     """
@@ -286,19 +306,21 @@ async def scan_item(
     try:
         jacket_bytes = await jacket_image.read()
         tag_bytes = await tag_image.read()
+        care_bytes = await care_image.read()
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Failed to read uploads: {exc}")
 
-    if not jacket_bytes or not tag_bytes:
+    if not jacket_bytes or not tag_bytes or not care_bytes:
         raise HTTPException(
             status_code=400,
-            detail="Both jacket_image and tag_image files are required.",
+            detail="jacket_image, tag_image, and care_image are all required.",
         )
 
     # ── 2. Compress images ────────────────────────────────────────────────────
     try:
         jacket_img = compress_image(jacket_bytes)
         tag_img = compress_image(tag_bytes)
+        care_img = compress_image(care_bytes)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Image processing failed: {exc}")
 
@@ -312,8 +334,8 @@ async def scan_item(
             asyncio.to_thread(
                 gemini_client.models.generate_content,
                 model=MODEL_ID,
-                # Order matters: garment first, then tag — matches the prompt wording.
-                contents=[jacket_img, tag_img, SCAN_PROMPT],
+                # Order matches prompt: garment, brand tag, care tag
+                contents=[jacket_img, tag_img, care_img, SCAN_PROMPT],
                 config=types.GenerateContentConfig(
                     # google_search grounding lets the model query live 2026
                     # shopping data for accurate MSRP and resale pricing.

@@ -31,6 +31,7 @@ const C = {
 const S = {
   CAPTURE_GARMENT: "CAPTURE_GARMENT",
   CAPTURE_TAG: "CAPTURE_TAG",
+  CAPTURE_CARE: "CAPTURE_CARE",
   LOADING: "LOADING",
   RESULT: "RESULT",
 };
@@ -49,6 +50,7 @@ async function fetchWithTimeout(url, options, ms) {
 export default function App() {
   const [screen, setScreen] = useState(S.CAPTURE_GARMENT);
   const [garmentUri, setGarmentUri] = useState(null);
+  const [tagUri, setTagUri] = useState(null);
   const [result, setResult] = useState(null);
 
   const [permission, requestPermission] = useCameraPermissions();
@@ -68,17 +70,25 @@ export default function App() {
   };
 
   const handleTagCapture = async () => {
-    const tagUri = await capturePhoto();
-    if (!tagUri) return;
-    setScreen(S.LOADING);
-    await submitScan(garmentUri, tagUri);
+    const uri = await capturePhoto();
+    if (!uri) return;
+    setTagUri(uri);
+    setScreen(S.CAPTURE_CARE);
   };
 
-  const submitScan = async (jacketUri, tagUri) => {
+  const handleCareCapture = async () => {
+    const careUri = await capturePhoto();
+    if (!careUri) return;
+    setScreen(S.LOADING);
+    await submitScan(garmentUri, tagUri, careUri);
+  };
+
+  const submitScan = async (jacketUri, brandTagUri, careUri) => {
     try {
       const body = new FormData();
       body.append("jacket_image", { uri: jacketUri, name: "jacket.jpg", type: "image/jpeg" });
-      body.append("tag_image", { uri: tagUri, name: "tag.jpg", type: "image/jpeg" });
+      body.append("tag_image", { uri: brandTagUri, name: "tag.jpg", type: "image/jpeg" });
+      body.append("care_image", { uri: careUri, name: "care.jpg", type: "image/jpeg" });
 
       const response = await fetchWithTimeout(
         SCAN_ENDPOINT,
@@ -104,6 +114,7 @@ export default function App() {
 
   const resetApp = () => {
     setGarmentUri(null);
+    setTagUri(null);
     setResult(null);
     setScreen(S.CAPTURE_GARMENT);
   };
@@ -164,6 +175,11 @@ export default function App() {
               ? result.size_of_prize?.toFixed(2)
               : result.estimated_as_is_value?.toFixed(2)}
           </Text>
+          {result.original_msrp > 0 && (
+            <Text style={styles.msrpText}>
+              Original retail: ${result.original_msrp?.toFixed(2)}
+            </Text>
+          )}
         </View>
 
         {/* Restoration badge — only shown when eligible */}
@@ -198,19 +214,27 @@ export default function App() {
   // ══════════════════════════════════════════════════════════════════════════
   // SCREEN: Camera
   // ══════════════════════════════════════════════════════════════════════════
-  const isGarmentStep = screen === S.CAPTURE_GARMENT;
-  const onCapture = isGarmentStep ? handleGarmentCapture : handleTagCapture;
+  let stepLabel, stepInstruction, onCapture;
+  if (screen === S.CAPTURE_GARMENT) {
+    stepLabel = "STEP 1 OF 3";
+    stepInstruction = "PHOTOGRAPH THE GARMENT\nCapture the entire item";
+    onCapture = handleGarmentCapture;
+  } else if (screen === S.CAPTURE_TAG) {
+    stepLabel = "STEP 2 OF 3";
+    stepInstruction = "PHOTOGRAPH THE BRAND TAG\nClose-up of the inner neck label";
+    onCapture = handleTagCapture;
+  } else {
+    stepLabel = "STEP 3 OF 3";
+    stepInstruction = "PHOTOGRAPH THE CARE TAG\nSide seam label with style number";
+    onCapture = handleCareCapture;
+  }
 
   return (
     <View style={styles.cameraWrapper}>
       <CameraView style={styles.camera} facing="back" ref={cameraRef}>
         <View style={styles.cameraHud}>
-          <Text style={styles.hudStep}>{isGarmentStep ? "STEP 1 OF 2" : "STEP 2 OF 2"}</Text>
-          <Text style={styles.hudInstruction}>
-            {isGarmentStep
-              ? "PHOTOGRAPH THE GARMENT\nCapture the entire item"
-              : "PHOTOGRAPH THE TAG\nClose-up of the inner label"}
-          </Text>
+          <Text style={styles.hudStep}>{stepLabel}</Text>
+          <Text style={styles.hudInstruction}>{stepInstruction}</Text>
         </View>
         <View style={styles.cameraFooter}>
           <TouchableOpacity style={styles.shutterRing} onPress={onCapture} activeOpacity={0.8}>
@@ -257,6 +281,10 @@ const styles = StyleSheet.create({
     fontWeight: "700", letterSpacing: 4, marginBottom: 6,
   },
   metricValue: { fontSize: 80, fontWeight: "900", color: C.white, letterSpacing: 1 },
+  msrpText: {
+    fontSize: 15, color: "rgba(255,255,255,0.55)",
+    fontWeight: "500", marginTop: 4, letterSpacing: 1,
+  },
   restorationBadge: {
     marginTop: 8,
     backgroundColor: "rgba(255,255,255,0.2)",
