@@ -915,8 +915,10 @@ async def scan_item(
     tag_image: UploadFile = File(...),
     back_image: UploadFile = File(...),
     facility: Optional[str] = Query(None),
+    model: Optional[str] = Query(None),
 ):
-    log.info(f"Scan request — facility={facility!r}")
+    effective_model = model or MODEL_ID
+    log.info(f"Scan request — facility={facility!r} model={effective_model!r}")
     scan_id = str(uuid.uuid4())
 
     try:
@@ -943,7 +945,7 @@ async def scan_item(
         vision_response = await asyncio.wait_for(
             asyncio.to_thread(
                 gemini_client.models.generate_content,
-                model=MODEL_ID,
+                model=effective_model,
                 contents=[jacket_img, tag_img, back_img, VISION_PROMPT],
                 config=types.GenerateContentConfig(temperature=0.1),
             ),

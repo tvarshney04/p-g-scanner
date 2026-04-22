@@ -53,6 +53,7 @@ const S = {
   LOADING: "LOADING",
   RESULT: "RESULT",
   DETAIL: "DETAIL",
+  BURST_RESULTS: "BURST_RESULTS",
 };
 
 const STEP_LABELS = ["Full Garment", "Brand Tag", "Back of Garment"];
@@ -297,6 +298,9 @@ export default function App() {
   const [catalog, setCatalog] = useState([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [zoomMode, setZoomMode] = useState('1x');
+  const [burstMode, setBurstMode] = useState(false);
+  const [burstCount, setBurstCount] = useState(0);
+  const [burstResults, setBurstResults] = useState([]);
 
   const { hasPermission, requestPermission } = useCameraPermission();
   const devices = useCameraDevices();
@@ -323,6 +327,9 @@ export default function App() {
   const capturePhaseRef = useRef('shooting');
   const capturedUrisRef = useRef([null, null, null]);
   capturedUrisRef.current = capturedUris; // sync every render
+  const burstCountRef = useRef(0);
+  burstCountRef.current = burstCount;
+  const handleConfirmScanRef = useRef(null);
 
   // Per-thumbnail flash animations (pink overlay on capture)
   const thumbFlash = useRef([new Animated.Value(0), new Animated.Value(0), new Animated.Value(0)]).current;
@@ -362,11 +369,7 @@ export default function App() {
 
     if (screen === S.CAPTURE) {
       if (capturePhaseRef.current === 'shooting') handleCapture();
-      else {
-        const uris = capturedUrisRef.current;
-        setScreen(S.LOADING);
-        submitScan(uris[0], uris[1], uris[2]);
-      }
+      else handleConfirmScanRef.current?.();
     } else if (screen === S.RESULT) {
       setResult(null);
       setCapturedUris([null, null, null]);
@@ -453,31 +456,63 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ step: "completed", thumbnail: null, updated_at: new Date().toISOString() }),
     }).catch(() => {});
-    setScreen(S.LOADING);
-    submitScan(uris[0], uris[1], uris[2]);
+    if (burstMode) {
+      const idx = burstCountRef.current;
+      const newCount = idx + 1;
+      burstCountRef.current = newCount;
+      setBurstCount(newCount);
+      setBurstResults(prev => [...prev, { index: idx, status: 'loading', data: null, error: null }]);
+      runScan(uris[0], uris[1], uris[2], 'gemini-2.5-pro').then(data => {
+        setBurstResults(prev => prev.map(r => r.index === idx ? { ...r, status: 'done', data } : r));
+      }).catch(err => {
+        setBurstResults(prev => prev.map(r => r.index === idx ? { ...r, status: 'error', error: err.message ?? 'Scan failed' } : r));
+      });
+      if (newCount < 10) {
+        setCapturedUris([null, null, null]);
+        setCaptureStep(0);
+        setCapturePhase('shooting');
+      } else {
+        setScreen(S.BURST_RESULTS);
+      }
+    } else {
+      setScreen(S.LOADING);
+      submitScan(uris[0], uris[1], uris[2]);
+    }
   };
+  handleConfirmScanRef.current = handleConfirmScan;
 
   const handleCancelScan = () => {
     setCapturedUris([null, null, null]);
     setCaptureStep(0);
     setCapturePhase('shooting');
+    if (burstMode) {
+      setBurstCount(0);
+      burstCountRef.current = 0;
+      setBurstResults([]);
+    }
     setScreen(S.HOME);
+  };
+
+  const runScan = async (jacketUri, brandTagUri, backUri, model = null) => {
+    const body = new FormData();
+    if (jacketUri) body.append("jacket_image", { uri: jacketUri, name: "jacket.jpg", type: "image/jpeg" });
+    if (brandTagUri) body.append("tag_image", { uri: brandTagUri, name: "tag.jpg", type: "image/jpeg" });
+    if (backUri) body.append("back_image", { uri: backUri, name: "back.jpg", type: "image/jpeg" });
+    const url = model ? `${SCAN_ENDPOINT}?model=${encodeURIComponent(model)}` : SCAN_ENDPOINT;
+    const response = await fetchWithTimeout(
+      url,
+      { method: "POST", body, headers: { "Content-Type": "multipart/form-data" } },
+      REQUEST_TIMEOUT_MS
+    );
+    if (!response.ok) throw new Error(`Server ${response.status}: ${await response.text()}`);
+    const json = await response.json();
+    return json.data;
   };
 
   const submitScan = async (jacketUri, brandTagUri, backUri) => {
     try {
-      const body = new FormData();
-      if (jacketUri) body.append("jacket_image", { uri: jacketUri, name: "jacket.jpg", type: "image/jpeg" });
-      if (brandTagUri) body.append("tag_image", { uri: brandTagUri, name: "tag.jpg", type: "image/jpeg" });
-      if (backUri) body.append("back_image", { uri: backUri, name: "back.jpg", type: "image/jpeg" });
-      const response = await fetchWithTimeout(
-        SCAN_ENDPOINT,
-        { method: "POST", body, headers: { "Content-Type": "multipart/form-data" } },
-        REQUEST_TIMEOUT_MS
-      );
-      if (!response.ok) throw new Error(`Server ${response.status}: ${await response.text()}`);
-      const json = await response.json();
-      setResult(json.data);
+      const data = await runScan(jacketUri, brandTagUri, backUri);
+      setResult(data);
       setScreen(S.RESULT);
     } catch (err) {
       const msg = err.name === "AbortError"
@@ -535,6 +570,7 @@ export default function App() {
               style={styles.newScanBtn}
               onPress={() => {
                 if (!hasPermission) { requestPermission(); return; }
+                if (burstMode) { setBurstCount(0); burstCountRef.current = 0; setBurstResults([]); }
                 setScreen(S.CAPTURE);
               }}
               activeOpacity={0.8}
@@ -542,6 +578,15 @@ export default function App() {
               <Text style={styles.newScanBtnText}>+ NEW SCAN</Text>
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View style={styles.modeSwitchRow}>
+          <TouchableOpacity style={[styles.modeBtn, !burstMode && styles.modeBtnActive]} onPress={() => setBurstMode(false)} activeOpacity={0.8}>
+            <Text style={[styles.modeBtnText, !burstMode && styles.modeBtnTextActive]}>Standard</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.modeBtn, burstMode && styles.modeBtnActive]} onPress={() => setBurstMode(true)} activeOpacity={0.8}>
+            <Text style={[styles.modeBtnText, burstMode && styles.modeBtnTextActive]}>Burst</Text>
+          </TouchableOpacity>
         </View>
 
         {catalogLoading ? (
@@ -772,6 +817,11 @@ export default function App() {
             })}
           </View>
           <View style={styles.capStepLabelRow}>
+            {burstMode && (
+              <View style={styles.burstBadge}>
+                <Text style={styles.burstBadgeText}>BURST  {burstCount + 1}/10</Text>
+              </View>
+            )}
             {capturePhase === 'shooting' ? (
               <Text style={styles.capStepLabel}>{captureStep + 1} / 3  ·  {STEP_LABELS[captureStep]}</Text>
             ) : (
@@ -841,6 +891,87 @@ export default function App() {
           caretHidden
         />
       </View>
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // BURST RESULTS
+  // ══════════════════════════════════════════════════════════════════════════
+  if (screen === S.BURST_RESULTS) {
+    const doneCount = burstResults.filter(r => r.status !== 'loading').length;
+    const allDone = burstResults.length > 0 && doneCount === burstResults.length;
+
+    const exitBurst = () => {
+      setBurstCount(0);
+      burstCountRef.current = 0;
+      setBurstResults([]);
+      setBurstMode(false);
+      setScreen(S.HOME);
+    };
+
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="light-content" backgroundColor={C.bg} />
+        <View style={styles.burstHeader}>
+          <TouchableOpacity onPress={exitBurst} activeOpacity={0.7}>
+            <Text style={styles.burstBackText}>← Exit</Text>
+          </TouchableOpacity>
+          <Text style={styles.burstTitle}>Burst  {doneCount}/{burstResults.length}</Text>
+          <View style={{ width: 60 }} />
+        </View>
+
+        <FlatList
+          data={burstResults}
+          keyExtractor={(item) => String(item.index)}
+          numColumns={2}
+          columnWrapperStyle={styles.catalogRow}
+          contentContainerStyle={[styles.catalogList, { paddingBottom: allDone ? 120 : 40 }]}
+          renderItem={({ item: r }) => (
+            <View style={styles.catalogCard}>
+              {r.status === 'loading' ? (
+                <View style={[styles.catalogThumb, styles.catalogThumbEmpty, styles.burstCardCenter]}>
+                  <ActivityIndicator color={C.accent} />
+                </View>
+              ) : r.status === 'error' ? (
+                <View style={[styles.catalogThumb, styles.catalogThumbEmpty, styles.burstCardCenter]}>
+                  <Text style={styles.burstErrorIcon}>✕</Text>
+                </View>
+              ) : r.data?.image_url ? (
+                <Image source={{ uri: r.data.image_url }} style={styles.catalogThumb} resizeMode="cover" />
+              ) : (
+                <View style={[styles.catalogThumb, styles.catalogThumbEmpty]} />
+              )}
+              <View style={styles.catalogCardBody}>
+                {r.status === 'loading' ? (
+                  <Text style={styles.catalogCardBrand}>SCANNING…</Text>
+                ) : r.status === 'error' ? (
+                  <Text style={[styles.catalogCardBrand, { color: '#DC2626' }]}>FAILED</Text>
+                ) : (
+                  <>
+                    <Text style={styles.catalogCardBrand} numberOfLines={1}>{r.data.brand}</Text>
+                    <Text style={styles.catalogCardModel} numberOfLines={2}>{r.data.model_name}</Text>
+                    <View style={styles.catalogCardFooter}>
+                      <Text style={styles.catalogCardPrice}>${r.data.estimated_as_is_value?.toFixed(0)}</Text>
+                    </View>
+                  </>
+                )}
+              </View>
+            </View>
+          )}
+        />
+
+        {allDone && (
+          <View style={styles.burstDoneBar}>
+            <TouchableOpacity
+              style={styles.burstDoneBtn}
+              onPress={() => { setBurstCount(0); burstCountRef.current = 0; setBurstResults([]); setScreen(S.HOME); }}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.burstDoneBtnText}>Done — View Catalog</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </SafeAreaView>
     );
   }
 
@@ -968,6 +1099,25 @@ const styles = StyleSheet.create({
   capThumbNumActive: { color: C.accent },
   capStepLabelRow: { alignItems: "center", paddingTop: 8 },
   capStepLabel: { fontSize: 13, fontWeight: "700", color: C.white, letterSpacing: 0.5 },
+
+  // ── Mode switch ───────────────────────────────────────────────────────────
+  modeSwitchRow: { flexDirection: "row", marginHorizontal: 24, marginBottom: 16, backgroundColor: C.card, borderRadius: 12, padding: 4, borderWidth: 1, borderColor: C.cardBorder },
+  modeBtn: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: "center" },
+  modeBtnActive: { backgroundColor: C.accent },
+  modeBtnText: { fontSize: 13, fontWeight: "700", color: C.textMuted, letterSpacing: 0.5 },
+  modeBtnTextActive: { color: C.white },
+
+  // ── Burst ─────────────────────────────────────────────────────────────────
+  burstBadge: { backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accent, borderRadius: 20, paddingVertical: 4, paddingHorizontal: 14, marginBottom: 6 },
+  burstBadgeText: { fontSize: 11, fontWeight: "800", color: C.accent, letterSpacing: 2 },
+  burstHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16 },
+  burstBackText: { fontSize: 15, color: C.textSub, fontWeight: "600" },
+  burstTitle: { fontSize: 20, fontWeight: "900", color: C.white },
+  burstCardCenter: { justifyContent: "center", alignItems: "center" },
+  burstErrorIcon: { fontSize: 22, color: "#DC2626" },
+  burstDoneBar: { position: "absolute", bottom: 0, left: 0, right: 0, paddingHorizontal: 24, paddingBottom: 44, paddingTop: 16, backgroundColor: C.bg, borderTopWidth: 1, borderTopColor: C.cardBorder },
+  burstDoneBtn: { backgroundColor: C.accent, borderRadius: 14, paddingVertical: 16, alignItems: "center" },
+  burstDoneBtnText: { fontSize: 15, fontWeight: "800", color: C.white, letterSpacing: 1 },
 
   // ── Capture control row (cancel | shutter | confirm) ─────────────────────
   captureControlRow: { flexDirection: "row", alignItems: "center", gap: 36 },
