@@ -336,6 +336,7 @@ export default function App() {
   const burstCountRef = useRef(0);
   burstCountRef.current = burstCount;
   const handleConfirmScanRef = useRef(null);
+  const retakeOnceRef = useRef(false); // true = single-photo retake, go back to review after one capture
 
   // Per-thumbnail flash animations (pink overlay on capture)
   const thumbFlash = useRef([new Animated.Value(0), new Animated.Value(0), new Animated.Value(0)]).current;
@@ -364,8 +365,14 @@ export default function App() {
       Animated.timing(thumbFlash[step], { toValue: 1, duration: 80, useNativeDriver: true }),
       Animated.timing(thumbFlash[step], { toValue: 0, duration: 400, useNativeDriver: true }),
     ]).start();
-    if (step < 2) setCaptureStep(step + 1);
-    else setCapturePhase('review');
+    if (retakeOnceRef.current) {
+      retakeOnceRef.current = false;
+      setCapturePhase('review');
+    } else if (step < 2) {
+      setCaptureStep(step + 1);
+    } else {
+      setCapturePhase('review');
+    }
   }, [setCaptureStep, setCapturePhase]);
 
   const handlePedalPress = useCallback(() => {
@@ -398,7 +405,7 @@ export default function App() {
         setCaptureStep(step - 1);
         handleCapture();
       } else if (phase === 'review') {
-        // Retake last photo immediately
+        retakeOnceRef.current = true;
         setCaptureStep(2);
         setCapturePhase('shooting');
         handleCapture();
@@ -804,10 +811,10 @@ export default function App() {
                 <Text style={styles.reviewLabel}>REVIEW  ·  Tap to retake</Text>
               </View>
               <View style={styles.reviewGrid}>
-                {/* Tag — big square on the left */}
+                {/* Tag — full width, top */}
                 <TouchableOpacity
-                  style={[styles.reviewSquare, { width: REVIEW_TAG, height: REVIEW_TAG }]}
-                  onPress={() => { setCapturedUris(prev => { const n=[...prev]; n[1]=null; return n; }); setCaptureStep(1); setCapturePhase('shooting'); }}
+                  style={[styles.reviewPanelTop]}
+                  onPress={() => { retakeOnceRef.current = true; setCapturedUris(prev => { const n=[...prev]; n[1]=null; return n; }); setCaptureStep(1); setCapturePhase('shooting'); }}
                   activeOpacity={0.85}
                 >
                   {capturedUris[1]
@@ -816,13 +823,13 @@ export default function App() {
                   <View style={styles.reviewPanelFooter}><Text style={styles.reviewPanelFooterText}>TAG</Text></View>
                 </TouchableOpacity>
 
-                {/* Garment + Back — small squares stacked on the right */}
-                <View style={{ gap: REVIEW_GAP }}>
+                {/* Garment + Back — side by side, bottom */}
+                <View style={styles.reviewBottomRow}>
                   {[0, 2].map((idx, row) => (
                     <TouchableOpacity
                       key={idx}
-                      style={[styles.reviewSquare, { width: REVIEW_SMALL, height: REVIEW_SMALL }]}
-                      onPress={() => { setCapturedUris(prev => { const n=[...prev]; n[idx]=null; return n; }); setCaptureStep(idx); setCapturePhase('shooting'); }}
+                      style={styles.reviewPanelBottom}
+                      onPress={() => { retakeOnceRef.current = true; setCapturedUris(prev => { const n=[...prev]; n[idx]=null; return n; }); setCaptureStep(idx); setCapturePhase('shooting'); }}
                       activeOpacity={0.85}
                     >
                       {capturedUris[idx]
@@ -1154,11 +1161,13 @@ const styles = StyleSheet.create({
   // ── Review ────────────────────────────────────────────────────────────────
   reviewHeader: { alignItems: 'center', paddingVertical: 14 },
   reviewLabel: { fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.6)', letterSpacing: 1 },
-  reviewGrid: { flexDirection: 'row', justifyContent: 'center', gap: REVIEW_GAP },
-  reviewSquare: { borderRadius: 12, overflow: 'hidden', backgroundColor: '#111' },
+  reviewGrid: { flex: 1, gap: REVIEW_GAP, paddingHorizontal: 12, paddingBottom: 4 },
+  reviewPanelTop: { flex: 2, borderRadius: 14, overflow: 'hidden', backgroundColor: '#111' },
+  reviewBottomRow: { flex: 1, flexDirection: 'row', gap: REVIEW_GAP },
+  reviewPanelBottom: { flex: 1, borderRadius: 14, overflow: 'hidden', backgroundColor: '#111' },
   reviewPanelFooter: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.65)', paddingVertical: 7, alignItems: 'center' },
   reviewPanelFooterText: { fontSize: 9, fontWeight: '800', color: 'rgba(255,255,255,0.65)', letterSpacing: 2 },
-  reviewControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 36, paddingVertical: 24, paddingBottom: 36 },
+  reviewControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 36, paddingVertical: 20, paddingBottom: 32 },
 
   // ── Mode switch ───────────────────────────────────────────────────────────
   modeSwitchRow: { flexDirection: "row", marginHorizontal: 24, marginBottom: 16, backgroundColor: C.card, borderRadius: 12, padding: 4, borderWidth: 1, borderColor: C.cardBorder },
