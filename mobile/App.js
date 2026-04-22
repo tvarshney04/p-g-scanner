@@ -22,7 +22,6 @@ import {
   useCameraPermission,
 } from "react-native-vision-camera";
 import { VolumeManager } from "react-native-volume-manager";
-import database from "@react-native-firebase/database";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 
 const API_BASE_URL = "https://pg-scanner-158499852321.us-central1.run.app";
@@ -433,10 +432,10 @@ export default function App() {
         [{ resize: { width: 400 } }],
         { compress: 0.6, format: SaveFormat.JPEG, base64: true }
       );
-      await database(RTDB_URL).ref("/preview/current").set({
-        step,
-        thumbnail: resized.base64,
-        updated_at: new Date().toISOString(),
+      await fetch(`${RTDB_URL}/preview/current.json`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step, thumbnail: resized.base64, updated_at: new Date().toISOString() }),
       });
     } catch (e) {}
   };
@@ -449,10 +448,10 @@ export default function App() {
 
   const handleConfirmScan = () => {
     const uris = capturedUrisRef.current;
-    database(RTDB_URL).ref("/preview/current").set({
-      step: "completed",
-      thumbnail: null,
-      updated_at: new Date().toISOString(),
+    fetch(`${RTDB_URL}/preview/current.json`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ step: "completed", thumbnail: null, updated_at: new Date().toISOString() }),
     }).catch(() => {});
     setScreen(S.LOADING);
     submitScan(uris[0], uris[1], uris[2]);
