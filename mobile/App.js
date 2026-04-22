@@ -785,96 +785,130 @@ export default function App() {
     return (
       <View style={styles.cameraWrapper}>
         <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+        {/* Camera stays mounted throughout so pedal retake works instantly */}
         <Camera ref={cameraRef} style={StyleSheet.absoluteFill} device={backDevice} isActive photo zoom={zoomValue} />
 
-        {/* Thumbnail strip overlay at top */}
-        <SafeAreaView style={styles.capOverlayTop}>
-          <View style={styles.capThumbRow}>
-            {[0, 1, 2].map(i => {
-              const isActive = captureStep === i && capturePhase === 'shooting';
-              const isCaptured = !!capturedUris[i];
-              return (
-                <TouchableOpacity
-                  key={i}
-                  style={[styles.capThumb, isActive && styles.capThumbActive, isCaptured && !isActive && styles.capThumbDone]}
-                  onPress={() => {
-                    setCapturedUris(prev => { const n = [...prev]; n[i] = null; return n; });
-                    setCaptureStep(i);
-                    setCapturePhase('shooting');
-                  }}
-                  activeOpacity={0.75}
-                >
-                  {isCaptured ? (
-                    <Image source={{ uri: capturedUris[i] }} style={styles.capThumbImg} resizeMode="cover" />
-                  ) : (
-                    <View style={styles.capThumbEmpty}>
-                      <Text style={[styles.capThumbNum, isActive && styles.capThumbNumActive]}>{i + 1}</Text>
-                    </View>
-                  )}
-                  <Animated.View style={[styles.capThumbFlash, { opacity: thumbFlash[i] }]} />
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-          <View style={styles.capStepLabelRow}>
-            {burstMode && (
-              <View style={styles.burstBadge}>
-                <Text style={styles.burstBadgeText}>BURST  {burstCount + 1}/10</Text>
+        {capturePhase === 'review' ? (
+          /* ── Review overlay: expanded photos fill the screen ── */
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]}>
+            <SafeAreaView style={{ flex: 1 }}>
+              <View style={styles.reviewHeader}>
+                <Text style={styles.reviewLabel}>REVIEW  ·  Tap to retake</Text>
               </View>
-            )}
-            {capturePhase === 'shooting' ? (
-              <Text style={styles.capStepLabel}>{captureStep + 1} / 3  ·  {STEP_LABELS[captureStep]}</Text>
-            ) : (
-              <Text style={styles.capStepLabel}>REVIEW  ·  Tap thumbnail to retake</Text>
-            )}
+              <View style={styles.reviewRow}>
+                {[0, 1, 2].map(i => (
+                  <TouchableOpacity
+                    key={i}
+                    style={[styles.reviewPanel, i === 1 && styles.reviewPanelTag]}
+                    onPress={() => {
+                      setCapturedUris(prev => { const n = [...prev]; n[i] = null; return n; });
+                      setCaptureStep(i);
+                      setCapturePhase('shooting');
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    {capturedUris[i] ? (
+                      <Image source={{ uri: capturedUris[i] }} style={styles.reviewImg} resizeMode="cover" />
+                    ) : (
+                      <View style={{ flex: 1, backgroundColor: '#0f0f1e' }} />
+                    )}
+                    <View style={styles.reviewPanelFooter}>
+                      <Text style={styles.reviewPanelFooterText}>{['GARMENT', 'TAG', 'BACK'][i]}</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <View style={styles.reviewControls}>
+                <TouchableOpacity style={styles.cancelScanBtn} onPress={handleCancelScan} activeOpacity={0.8}>
+                  <Text style={styles.cancelScanBtnText}>✕</Text>
+                </TouchableOpacity>
+                <View style={styles.shutterPlaceholder} />
+                <TouchableOpacity style={styles.confirmScanBtn} onPress={handleConfirmScan} activeOpacity={0.8}>
+                  <Text style={styles.confirmScanBtnText}>✓</Text>
+                </TouchableOpacity>
+              </View>
+            </SafeAreaView>
           </View>
-        </SafeAreaView>
+        ) : (
+          /* ── Shooting UI ── */
+          <>
+            <SafeAreaView style={styles.capOverlayTop}>
+              <View style={styles.capThumbRow}>
+                {[0, 1, 2].map(i => {
+                  const isActive = captureStep === i;
+                  const isCaptured = !!capturedUris[i];
+                  return (
+                    <TouchableOpacity
+                      key={i}
+                      style={[styles.capThumb, isActive && styles.capThumbActive, isCaptured && !isActive && styles.capThumbDone]}
+                      onPress={() => {
+                        setCapturedUris(prev => { const n = [...prev]; n[i] = null; return n; });
+                        setCaptureStep(i);
+                      }}
+                      activeOpacity={0.75}
+                    >
+                      {isCaptured ? (
+                        <Image source={{ uri: capturedUris[i] }} style={styles.capThumbImg} resizeMode="cover" />
+                      ) : (
+                        <View style={styles.capThumbEmpty}>
+                          <Text style={[styles.capThumbNum, isActive && styles.capThumbNumActive]}>{i + 1}</Text>
+                        </View>
+                      )}
+                      <Animated.View style={[styles.capThumbFlash, { opacity: thumbFlash[i] }]} />
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <View style={styles.capStepLabelRow}>
+                {burstMode && (
+                  <View style={styles.burstBadge}>
+                    <Text style={styles.burstBadgeText}>BURST  {burstCount + 1}/10</Text>
+                  </View>
+                )}
+                <Text style={styles.capStepLabel}>{captureStep + 1} / 3  ·  {STEP_LABELS[captureStep]}</Text>
+              </View>
+            </SafeAreaView>
 
-        {/* Bottom controls */}
-        <View style={styles.cameraFooter}>
-          {capturePhase === 'shooting' && (
-            <View style={styles.zoomRow}>
-              {hasUltraWide && (
+            <View style={styles.cameraFooter}>
+              <View style={styles.zoomRow}>
+                {hasUltraWide && (
+                  <TouchableOpacity
+                    style={[styles.zoomBtn, zoomMode === '0.5x' && styles.zoomBtnActive]}
+                    onPress={() => setZoomMode('0.5x')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.zoomBtnText, zoomMode === '0.5x' && styles.zoomBtnTextActive]}>0.5×</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
-                  style={[styles.zoomBtn, zoomMode === '0.5x' && styles.zoomBtnActive]}
-                  onPress={() => setZoomMode('0.5x')}
+                  style={[styles.zoomBtn, zoomMode === '1x' && styles.zoomBtnActive]}
+                  onPress={() => setZoomMode('1x')}
                   activeOpacity={0.8}
                 >
-                  <Text style={[styles.zoomBtnText, zoomMode === '0.5x' && styles.zoomBtnTextActive]}>0.5×</Text>
+                  <Text style={[styles.zoomBtnText, zoomMode === '1x' && styles.zoomBtnTextActive]}>1×</Text>
                 </TouchableOpacity>
-              )}
-              <TouchableOpacity
-                style={[styles.zoomBtn, zoomMode === '1x' && styles.zoomBtnActive]}
-                onPress={() => setZoomMode('1x')}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.zoomBtnText, zoomMode === '1x' && styles.zoomBtnTextActive]}>1×</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.zoomBtn, zoomMode === '2x' && styles.zoomBtnActive]}
-                onPress={() => setZoomMode('2x')}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.zoomBtnText, zoomMode === '2x' && styles.zoomBtnTextActive]}>2×</Text>
-              </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.zoomBtn, zoomMode === '2x' && styles.zoomBtnActive]}
+                  onPress={() => setZoomMode('2x')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.zoomBtnText, zoomMode === '2x' && styles.zoomBtnTextActive]}>2×</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.captureControlRow}>
+                <TouchableOpacity style={styles.cancelScanBtn} onPress={handleCancelScan} activeOpacity={0.8}>
+                  <Text style={styles.cancelScanBtnText}>✕</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.shutterRing} onPress={handleCapture} activeOpacity={0.85}>
+                  <View style={styles.shutterDisc} />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.confirmScanBtn} onPress={handleConfirmScan} activeOpacity={0.8}>
+                  <Text style={styles.confirmScanBtnText}>✓</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          )}
-          <View style={styles.captureControlRow}>
-            <TouchableOpacity style={styles.cancelScanBtn} onPress={handleCancelScan} activeOpacity={0.8}>
-              <Text style={styles.cancelScanBtnText}>✕</Text>
-            </TouchableOpacity>
-            {capturePhase === 'shooting' ? (
-              <TouchableOpacity style={styles.shutterRing} onPress={handleCapture} activeOpacity={0.85}>
-                <View style={styles.shutterDisc} />
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.shutterPlaceholder} />
-            )}
-            <TouchableOpacity style={styles.confirmScanBtn} onPress={handleConfirmScan} activeOpacity={0.8}>
-              <Text style={styles.confirmScanBtnText}>✓</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+          </>
+        )}
 
         {/* Hidden input for Bluetooth pedal (Space = left, Enter = right) */}
         <TextInput
@@ -1099,6 +1133,17 @@ const styles = StyleSheet.create({
   capThumbNumActive: { color: C.accent },
   capStepLabelRow: { alignItems: "center", paddingTop: 8 },
   capStepLabel: { fontSize: 13, fontWeight: "700", color: C.white, letterSpacing: 0.5 },
+
+  // ── Review ────────────────────────────────────────────────────────────────
+  reviewHeader: { alignItems: 'center', paddingVertical: 14 },
+  reviewLabel: { fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.6)', letterSpacing: 1 },
+  reviewRow: { flex: 1, flexDirection: 'row', paddingHorizontal: 16, gap: 10 },
+  reviewPanel: { flex: 3, borderRadius: 14, overflow: 'hidden', backgroundColor: '#111' },
+  reviewPanelTag: { flex: 4 },
+  reviewImg: { flex: 1, width: '100%' },
+  reviewPanelFooter: { backgroundColor: 'rgba(0,0,0,0.65)', paddingVertical: 8, alignItems: 'center' },
+  reviewPanelFooterText: { fontSize: 9, fontWeight: '800', color: 'rgba(255,255,255,0.65)', letterSpacing: 2 },
+  reviewControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 36, paddingVertical: 24, paddingBottom: 36 },
 
   // ── Mode switch ───────────────────────────────────────────────────────────
   modeSwitchRow: { flexDirection: "row", marginHorizontal: 24, marginBottom: 16, backgroundColor: C.card, borderRadius: 12, padding: 4, borderWidth: 1, borderColor: C.cardBorder },
