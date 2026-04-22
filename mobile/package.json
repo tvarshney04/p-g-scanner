@@ -9,11 +9,18 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@react-native-firebase/app": "^24.0.0",
+    "@react-native-firebase/database": "^24.0.0",
     "expo": "~54.0.33",
+    "expo-build-properties": "~1.0.10",
     "expo-camera": "~17.0.10",
+    "expo-image-manipulator": "^55.0.15",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
-    "react-native": "0.81.5"
+    "react-native": "0.81.5",
+    "react-native-keyevent": "^0.3.2",
+    "react-native-vision-camera": "^4.7.3",
+    "react-native-volume-manager": "^2.0.8"
   },
   "private": true
 }
