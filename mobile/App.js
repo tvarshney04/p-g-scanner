@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Dimensions,
   FlatList,
   Image,
   Linking,
@@ -60,6 +61,11 @@ const STEP_LABELS = ["Full Garment", "Brand Tag", "Back of Garment"];
 const STEP_KEYS = ["garment", "tag", "back"];
 
 const EXPORT_URL = `${API_BASE_URL}/api/v1/scans/export.csv`;
+
+// Review screen square sizes: tag (left, big) + garment/back (right column, stacked)
+const REVIEW_GAP = 8;
+const REVIEW_SMALL = Math.floor((Dimensions.get('window').width - REVIEW_GAP * 2) / 3);
+const REVIEW_TAG = REVIEW_SMALL * 2 + REVIEW_GAP;
 
 async function fetchWithTimeout(url, options, ms) {
   const controller = new AbortController();
@@ -411,12 +417,14 @@ export default function App() {
     };
   }, [screen, handlePedalPress]);
 
+  const catalogLoadedRef = useRef(false);
   const loadCatalog = useCallback(async () => {
     try {
-      setCatalogLoading(true);
+      if (!catalogLoadedRef.current) setCatalogLoading(true);
       const res = await fetch(CATALOG_ENDPOINT);
       const json = await res.json();
       setCatalog(json.items || []);
+      catalogLoadedRef.current = true;
     } catch (e) {
       setCatalog([]);
     } finally {
@@ -789,34 +797,43 @@ export default function App() {
         <Camera ref={cameraRef} style={StyleSheet.absoluteFill} device={backDevice} isActive photo zoom={zoomValue} />
 
         {capturePhase === 'review' ? (
-          /* ── Review overlay: expanded photos fill the screen ── */
+          /* ── Review overlay: 2-col square grid, tag big left, garment+back stacked right ── */
           <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]}>
             <SafeAreaView style={{ flex: 1 }}>
               <View style={styles.reviewHeader}>
                 <Text style={styles.reviewLabel}>REVIEW  ·  Tap to retake</Text>
               </View>
-              <View style={styles.reviewRow}>
-                {[0, 1, 2].map(i => (
-                  <TouchableOpacity
-                    key={i}
-                    style={[styles.reviewPanel, i === 1 && styles.reviewPanelTag]}
-                    onPress={() => {
-                      setCapturedUris(prev => { const n = [...prev]; n[i] = null; return n; });
-                      setCaptureStep(i);
-                      setCapturePhase('shooting');
-                    }}
-                    activeOpacity={0.85}
-                  >
-                    {capturedUris[i] ? (
-                      <Image source={{ uri: capturedUris[i] }} style={styles.reviewImg} resizeMode="cover" />
-                    ) : (
-                      <View style={{ flex: 1, backgroundColor: '#0f0f1e' }} />
-                    )}
-                    <View style={styles.reviewPanelFooter}>
-                      <Text style={styles.reviewPanelFooterText}>{['GARMENT', 'TAG', 'BACK'][i]}</Text>
-                    </View>
-                  </TouchableOpacity>
-                ))}
+              <View style={styles.reviewGrid}>
+                {/* Tag — big square on the left */}
+                <TouchableOpacity
+                  style={[styles.reviewSquare, { width: REVIEW_TAG, height: REVIEW_TAG }]}
+                  onPress={() => { setCapturedUris(prev => { const n=[...prev]; n[1]=null; return n; }); setCaptureStep(1); setCapturePhase('shooting'); }}
+                  activeOpacity={0.85}
+                >
+                  {capturedUris[1]
+                    ? <Image source={{ uri: capturedUris[1] }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                    : <View style={[StyleSheet.absoluteFill, { backgroundColor: '#0f0f1e' }]} />}
+                  <View style={styles.reviewPanelFooter}><Text style={styles.reviewPanelFooterText}>TAG</Text></View>
+                </TouchableOpacity>
+
+                {/* Garment + Back — small squares stacked on the right */}
+                <View style={{ gap: REVIEW_GAP }}>
+                  {[0, 2].map((idx, row) => (
+                    <TouchableOpacity
+                      key={idx}
+                      style={[styles.reviewSquare, { width: REVIEW_SMALL, height: REVIEW_SMALL }]}
+                      onPress={() => { setCapturedUris(prev => { const n=[...prev]; n[idx]=null; return n; }); setCaptureStep(idx); setCapturePhase('shooting'); }}
+                      activeOpacity={0.85}
+                    >
+                      {capturedUris[idx]
+                        ? <Image source={{ uri: capturedUris[idx] }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                        : <View style={[StyleSheet.absoluteFill, { backgroundColor: '#0f0f1e' }]} />}
+                      <View style={styles.reviewPanelFooter}>
+                        <Text style={styles.reviewPanelFooterText}>{['GARMENT','BACK'][row]}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
               <View style={styles.reviewControls}>
                 <TouchableOpacity style={styles.cancelScanBtn} onPress={handleCancelScan} activeOpacity={0.8}>
@@ -1137,11 +1154,9 @@ const styles = StyleSheet.create({
   // ── Review ────────────────────────────────────────────────────────────────
   reviewHeader: { alignItems: 'center', paddingVertical: 14 },
   reviewLabel: { fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.6)', letterSpacing: 1 },
-  reviewRow: { flex: 1, flexDirection: 'row', paddingHorizontal: 16, gap: 10 },
-  reviewPanel: { flex: 3, borderRadius: 14, overflow: 'hidden', backgroundColor: '#111' },
-  reviewPanelTag: { flex: 4 },
-  reviewImg: { flex: 1, width: '100%' },
-  reviewPanelFooter: { backgroundColor: 'rgba(0,0,0,0.65)', paddingVertical: 8, alignItems: 'center' },
+  reviewGrid: { flexDirection: 'row', justifyContent: 'center', gap: REVIEW_GAP },
+  reviewSquare: { borderRadius: 12, overflow: 'hidden', backgroundColor: '#111' },
+  reviewPanelFooter: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: 'rgba(0,0,0,0.65)', paddingVertical: 7, alignItems: 'center' },
   reviewPanelFooterText: { fontSize: 9, fontWeight: '800', color: 'rgba(255,255,255,0.65)', letterSpacing: 2 },
   reviewControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 36, paddingVertical: 24, paddingBottom: 36 },
 
