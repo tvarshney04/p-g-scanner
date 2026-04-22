@@ -14,7 +14,7 @@
     "expo": "~54.0.33",
     "expo-build-properties": "~1.0.10",
     "expo-camera": "~17.0.10",
-    "expo-image-manipulator": "^55.0.15",
+    "expo-image-manipulator": "~14.0.8",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
     "react-native": "0.81.5",
