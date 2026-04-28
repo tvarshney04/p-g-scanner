@@ -197,6 +197,14 @@ You are given TWO or THREE images:
 
 9. estimated_as_is_value: USD float. What this sells for used given its condition.
 
+10. tier: Goodwill routing tier. Choose exactly one:
+    - "best": eCommerce-worthy. High resale value (generally $30+), clean or at most negligible
+      wear. A premium brand (Arc'teryx, Patagonia, Lululemon, Moncler, Canada Goose, etc.)
+      with strong resale can be "best" even with a very light stain if the value clearly warrants it.
+    - "better": Floor sale. No visible staining (light wear/fading ok), resale value generally $10+.
+    - "good": Salvage/outlet. Visible staining, any structural damage, OR resale value under ~$10
+      regardless of condition.
+
 
 Respond with ONLY valid JSON, no markdown, no prose:
 {
@@ -209,7 +217,8 @@ Respond with ONLY valid JSON, no markdown, no prose:
   "flags": [],
   "condition_rating": 7,
   "original_msrp": 0.00,
-  "estimated_as_is_value": 0.00
+  "estimated_as_is_value": 0.00,
+  "tier": "good"
 }
 """
 
@@ -761,6 +770,7 @@ class ScanResult(BaseModel):
     condition_rating: int = 5
     original_msrp: Optional[float] = None
     estimated_as_is_value: float
+    tier: str = Field(default="good")
     explore_url: str
     image_url: Optional[str] = None
     tag_image_url: Optional[str] = None
@@ -972,6 +982,8 @@ async def scan_item(
     log.info(f"MSRP={original_msrp}")
 
     estimated_as_is_value = float(vision_data.get("estimated_as_is_value", 0.0))
+    tier_raw = vision_data.get("tier", "good").lower().strip()
+    tier = tier_raw if tier_raw in ("best", "better", "good") else "good"
     timestamp = datetime.now(timezone.utc).isoformat()
 
     # Upload all 3 images to GCS in parallel (non-fatal)
@@ -993,6 +1005,7 @@ async def scan_item(
         condition_rating=condition_rating,
         original_msrp=original_msrp,
         estimated_as_is_value=estimated_as_is_value,
+        tier=tier,
         explore_url=explore_url,
         image_url=image_url,
         tag_image_url=tag_image_url,

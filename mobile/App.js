@@ -92,6 +92,18 @@ function FakeBarcode() {
   );
 }
 
+// ── Tier config ───────────────────────────────────────────────────────────────
+function getTierConfig(tier) {
+  switch ((tier || "good").toLowerCase()) {
+    case "best":
+      return { label: "BEST", sub: "eCommerce", bg: "#F5C800", border: "#F5C800", text: "#111", subColor: "#111" };
+    case "better":
+      return { label: "BETTER", sub: "Floor Sale", bg: "rgba(37,99,235,0.12)", border: "#2563EB", text: "#2563EB", subColor: "#2563EB" };
+    default:
+      return { label: "GOOD", sub: "Salvage / Outlet", bg: "rgba(90,90,120,0.15)", border: "#5A5A78", text: "#9090B0", subColor: "#9090B0" };
+  }
+}
+
 // ── Category → header color ───────────────────────────────────────────────────
 function tagHeaderColor(category = "") {
   const c = category.toLowerCase();
@@ -214,6 +226,17 @@ function ResultCard({ item, onExplore, onPrimary, primaryLabel, onBack, onDelete
 
         {/* Model name */}
         <Text style={styles.resultModel}>{item.model_name}</Text>
+
+        {/* Tier badge */}
+        {(() => {
+          const t = getTierConfig(item.tier);
+          return (
+            <View style={[styles.tierBadge, { backgroundColor: t.bg, borderColor: t.border }]}>
+              <Text style={[styles.tierBadgeLabel, { color: t.text }]}>{t.label}</Text>
+              <Text style={[styles.tierBadgeSub, { color: t.subColor }]}>{t.sub}</Text>
+            </View>
+          );
+        })()}
 
         {/* Price block */}
         <View style={styles.resultPriceBlock}>
@@ -482,13 +505,9 @@ export default function App() {
       }).catch(err => {
         setBurstResults(prev => prev.map(r => r.index === idx ? { ...r, status: 'error', error: err.message ?? 'Scan failed' } : r));
       });
-      if (newCount < 10) {
-        setCapturedUris([null, null, null]);
-        setCaptureStep(0);
-        setCapturePhase('shooting');
-      } else {
-        setScreen(S.BURST_RESULTS);
-      }
+      setCapturedUris([null, null, null]);
+      setCaptureStep(0);
+      setCapturePhase('shooting');
     } else {
       setScreen(S.LOADING);
       submitScan(uris[0], uris[1], uris[2]);
@@ -570,7 +589,7 @@ export default function App() {
         <StatusBar barStyle="light-content" backgroundColor={C.bg} />
         <View style={styles.homeHeader}>
           <View>
-            <Text style={styles.homeTitle}>Scanner</Text>
+            <Text style={styles.homeTitle}>P&G Scanner</Text>
             <Text style={styles.homeSubtitle}>{catalog.length} items scanned</Text>
           </View>
           <View style={styles.homeHeaderActions}>
@@ -582,7 +601,7 @@ export default function App() {
               <Text style={styles.analyticsBtnText}>Analytics</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.newScanBtn}
+              style={styles.newScanFab}
               onPress={() => {
                 if (!hasPermission) { requestPermission(); return; }
                 if (burstMode) { setBurstCount(0); burstCountRef.current = 0; setBurstResults([]); }
@@ -590,7 +609,7 @@ export default function App() {
               }}
               activeOpacity={0.8}
             >
-              <Text style={styles.newScanBtnText}>+ NEW SCAN</Text>
+              <Text style={styles.newScanFabText}>+</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -636,6 +655,7 @@ export default function App() {
                   <Text style={styles.catalogCardModel} numberOfLines={2}>{item.model_name}</Text>
                   <View style={styles.catalogCardFooter}>
                     <Text style={styles.catalogCardPrice}>${item.estimated_as_is_value?.toFixed(0)}</Text>
+                    <View style={[styles.catalogTierDot, { backgroundColor: getTierConfig(item.tier).border }]} />
                   </View>
                 </View>
               </TouchableOpacity>
@@ -652,6 +672,8 @@ export default function App() {
   if (screen === S.ANALYTICS) {
     const totalValue = catalog.reduce((s, i) => s + (parseFloat(i.estimated_as_is_value) || 0), 0);
     const avgValue = catalog.length ? totalValue / catalog.length : 0;
+    const tierCounts = { best: 0, better: 0, good: 0 };
+    catalog.forEach((i) => { const t = (i.tier || "good").toLowerCase(); if (t in tierCounts) tierCounts[t]++; });
     const categoryMap = {};
     catalog.forEach((i) => {
       const cat = i.category || "Uncategorized";
@@ -683,6 +705,21 @@ export default function App() {
             <View style={styles.statCard}>
               <Text style={styles.statValue}>${avgValue.toFixed(2)}</Text>
               <Text style={styles.statLabel}>AVG PER ITEM</Text>
+            </View>
+          </View>
+
+          <View style={styles.statsRow}>
+            <View style={[styles.statCard, { borderColor: "#F5C800" }]}>
+              <Text style={[styles.statValue, { color: "#F5C800" }]}>{tierCounts.best}</Text>
+              <Text style={styles.statLabel}>BEST</Text>
+            </View>
+            <View style={[styles.statCard, { borderColor: C.blue }]}>
+              <Text style={[styles.statValue, { color: C.blue }]}>{tierCounts.better}</Text>
+              <Text style={styles.statLabel}>BETTER</Text>
+            </View>
+            <View style={[styles.statCard, { borderColor: C.textMuted }]}>
+              <Text style={[styles.statValue, { color: C.textMuted }]}>{tierCounts.good}</Text>
+              <Text style={styles.statLabel}>GOOD</Text>
             </View>
           </View>
 
@@ -885,8 +922,15 @@ export default function App() {
               </View>
               <View style={styles.capStepLabelRow}>
                 {burstMode && (
-                  <View style={styles.burstBadge}>
-                    <Text style={styles.burstBadgeText}>BURST  {burstCount + 1}/10</Text>
+                  <View style={styles.burstBadgeRow}>
+                    <View style={styles.burstBadge}>
+                      <Text style={styles.burstBadgeText}>BURST  {burstCount + 1}</Text>
+                    </View>
+                    {burstCount > 0 && (
+                      <TouchableOpacity style={styles.burstFinishBtn} onPress={() => setScreen(S.BURST_RESULTS)} activeOpacity={0.8}>
+                        <Text style={styles.burstFinishBtnText}>Finish  ({burstCount})</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 )}
                 <Text style={styles.capStepLabel}>{captureStep + 1} / 3  ·  {STEP_LABELS[captureStep]}</Text>
@@ -1047,12 +1091,12 @@ const styles = StyleSheet.create({
   // ── Home ──────────────────────────────────────────────────────────────────
   homeHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 24, paddingTop: 8, paddingBottom: 20 },
   homeHeaderActions: { flexDirection: "row", gap: 8, alignItems: "center" },
-  homeTitle: { fontSize: 30, fontWeight: "900", color: C.white, letterSpacing: 0.5 },
+  homeTitle: { fontSize: 26, fontWeight: "900", color: C.white, letterSpacing: 0.5 },
   homeSubtitle: { fontSize: 13, color: C.textMuted, marginTop: 2 },
   analyticsBtn: { borderWidth: 1, borderColor: C.cardBorder, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14 },
   analyticsBtnText: { fontSize: 13, fontWeight: "700", color: C.textSub, letterSpacing: 0.5 },
-  newScanBtn: { backgroundColor: C.accent, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16 },
-  newScanBtnText: { fontSize: 13, fontWeight: "800", color: C.white, letterSpacing: 1.5 },
+  newScanFab: { width: 42, height: 42, borderRadius: 21, backgroundColor: C.accent, justifyContent: "center", alignItems: "center" },
+  newScanFabText: { fontSize: 26, color: C.white, fontWeight: "300", lineHeight: 30 },
   emptyText: { fontSize: 20, color: C.textPrimary, fontWeight: "700", marginBottom: 8 },
   emptySubtext: { fontSize: 15, color: C.textMuted },
 
@@ -1099,6 +1143,10 @@ const styles = StyleSheet.create({
   resultModel: { fontSize: 28, fontWeight: "900", color: C.white, lineHeight: 34, marginBottom: 14 },
   resultBadge: { alignSelf: "flex-start", paddingVertical: 5, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1, marginBottom: 20 },
   resultBadgeText: { fontSize: 11, fontWeight: "800", letterSpacing: 2 },
+  tierBadge: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1.5, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 18, marginBottom: 16 },
+  tierBadgeLabel: { fontSize: 22, fontWeight: "900", letterSpacing: 2 },
+  tierBadgeSub: { fontSize: 13, fontWeight: "700", letterSpacing: 1 },
+  catalogTierDot: { width: 9, height: 9, borderRadius: 5 },
   resultPriceBlock: { flexDirection: "row", alignItems: "flex-end", gap: 24, marginBottom: 16 },
   resultPriceItem: {},
   resultPriceItemRight: { borderLeftWidth: 1, borderLeftColor: C.cardBorder, paddingLeft: 24 },
@@ -1177,8 +1225,11 @@ const styles = StyleSheet.create({
   modeBtnTextActive: { color: C.white },
 
   // ── Burst ─────────────────────────────────────────────────────────────────
-  burstBadge: { backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accent, borderRadius: 20, paddingVertical: 4, paddingHorizontal: 14, marginBottom: 6 },
+  burstBadgeRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 6 },
+  burstBadge: { backgroundColor: C.accentSoft, borderWidth: 1, borderColor: C.accent, borderRadius: 20, paddingVertical: 4, paddingHorizontal: 14 },
   burstBadgeText: { fontSize: 11, fontWeight: "800", color: C.accent, letterSpacing: 2 },
+  burstFinishBtn: { backgroundColor: C.white, borderRadius: 20, paddingVertical: 4, paddingHorizontal: 14 },
+  burstFinishBtnText: { fontSize: 11, fontWeight: "800", color: C.bg, letterSpacing: 1 },
   burstHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16 },
   burstBackText: { fontSize: 15, color: C.textSub, fontWeight: "600" },
   burstTitle: { fontSize: 20, fontWeight: "900", color: C.white },
